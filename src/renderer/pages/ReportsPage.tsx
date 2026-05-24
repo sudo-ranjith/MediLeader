@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, PieChart, Pie, Cell, Legend,
+} from 'recharts';
 import { Download, TrendingUp, Package, AlertTriangle, CreditCard } from 'lucide-react';
 import { formatCurrency } from '../utils/gstCalculator';
 import { differenceInDays, parseISO } from 'date-fns';
@@ -32,6 +35,10 @@ export default function ReportsPage() {
   // Inventory State
   const [inventoryData, setInventoryData] = useState<{ totalValue: number; totalItems: number; rows: any[] }>({ totalValue: 0, totalItems: 0, rows: [] });
 
+  // Chart data
+  const [gstBreakdown, setGstBreakdown] = useState<any[]>([]);
+  const [stockStatusData, setStockStatusData] = useState<any[]>([]);
+
   useEffect(() => { loadTabData(); }, [activeTab, startDate, endDate]);
 
   async function loadTabData() {
@@ -59,6 +66,19 @@ export default function ReportsPage() {
     const gst = rows.reduce((s: number, r: any) => s + r.gst, 0);
     const txn = rows.reduce((s: number, r: any) => s + r.transactions, 0);
     setSalesMetrics({ revenue: rev, gst, transactions: txn });
+
+    // GST breakdown by rate
+    const gstRows = await window.api.dbSelect(
+      `SELECT ii.gst_rate, COALESCE(SUM(ii.gst_amount),0) as gst_collected, COALESCE(SUM(ii.item_total),0) as revenue
+       FROM invoice_items ii JOIN invoices inv ON ii.invoice_id = inv.id
+       WHERE inv.date BETWEEN ? AND ? AND inv.status = 'paid'
+       GROUP BY ii.gst_rate ORDER BY ii.gst_rate`,
+      [startDate, endDate]
+    );
+    setGstBreakdown(gstRows.map((r: any) => ({
+      name: `${r.gst_rate}% GST`,
+      value: parseFloat(r.gst_collected.toFixed(2)),
+    })));
   }
 
   async function loadMedicineSales() {
@@ -85,6 +105,23 @@ export default function ReportsPage() {
       []
     );
     setExpiryData(rows);
+
+    // Stock status distribution for PieChart
+    const today = new Date();
+    let expired = 0, expiring30 = 0, expiring90 = 0, normal = 0;
+    for (const r of rows as any[]) {
+      const days = differenceInDays(parseISO(r.expiry_date), today);
+      if (days < 0) expired++;
+      else if (days <= 30) expiring30++;
+      else if (days <= 90) expiring90++;
+      else normal++;
+    }
+    setStockStatusData([
+      { name: 'Normal', value: normal },
+      { name: 'Expiring (90d)', value: expiring90 },
+      { name: 'Expiring (30d)', value: expiring30 },
+      { name: 'Expired', value: expired },
+    ].filter(d => d.value > 0));
   }
 
   async function loadCredit() {
@@ -216,6 +253,22 @@ export default function ReportsPage() {
                   </ResponsiveContainer>
                 )}
               </div>
+              {gstBreakdown.length > 0 && (
+                <div className="card">
+                  <h3 className="font-semibold text-slate-700 mb-4">GST Breakdown by Rate</h3>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <PieChart>
+                      <Pie data={gstBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
+                        {gstBreakdown.map((_entry, index) => (
+                          <Cell key={index} fill={['#94a3b8', '#3b82f6', '#10b981', '#8b5cf6'][index % 4]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v: number) => formatCurrency(v)} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
           )}
 
@@ -250,6 +303,32 @@ export default function ReportsPage() {
           {/* Expiry Tracking Tab */}
           {activeTab === 'expiry' && (
             <div className="space-y-4">
+              {stockStatusData.length > 0 && (
+                <div className="card">
+                  <h3 className="font-semibold text-slate-700 mb-4">Stock Status Distribution</h3>
+                  <div className="flex items-center gap-6">
+                    <div className="flex-shrink-0">
+                      <PieChart width={200} height={200}>
+                        <Pie data={stockStatusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
+                          {stockStatusData.map((_entry, index) => (
+                            <Cell key={index} fill={['#10b981', '#f59e0b', '#f97316', '#ef4444'][index % 4]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </div>
+                    <div className="space-y-2">
+                      {stockStatusData.map((d, i) => (
+                        <div key={d.name} className="flex items-center gap-2 text-sm">
+                          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: ['#10b981', '#f59e0b', '#f97316', '#ef4444'][i % 4] }} />
+                          <span className="text-slate-600">{d.name}:</span>
+                          <span className="font-semibold text-slate-800">{d.value} batches</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-4 gap-4 text-sm">
                 {[
                   { label: 'Expired', filter: (d: number) => d < 0, cls: 'bg-red-50 border-red-200 text-red-700' },

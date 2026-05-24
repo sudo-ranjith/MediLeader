@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, AlertTriangle, Search, Edit2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, AlertTriangle, Search, Edit2, ShoppingBag } from 'lucide-react';
 import DataTable, { Column } from '../components/DataTable';
 import Modal from '../components/Modal';
 import { dbRun } from '../hooks/useDatabase';
@@ -21,6 +22,7 @@ interface Medicine {
 }
 
 export default function StockPage() {
+  const navigate = useNavigate();
   const [stock, setStock] = useState<StockRow[]>([]);
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +79,39 @@ export default function StockPage() {
   }
 
   const lowStockItems = stock.filter(s => getStatus(s) === 'danger');
+
+  async function handleQuickReorder() {
+    const lowStock = stock.filter(s => s.quantity <= s.reorder_level && s.quantity >= 0);
+    if (lowStock.length === 0) { alert('No low-stock items found.'); return; }
+
+    const poNumber = await window.api.generatePONumber();
+    const suppliersResult = await window.api.dbSelect('SELECT id, name FROM suppliers ORDER BY name ASC LIMIT 1', []);
+    const supplierId = (suppliersResult[0] as any)?.id;
+    if (!supplierId) {
+      alert('Please add a supplier first before creating a reorder PO.');
+      return;
+    }
+    const supplierName = (suppliersResult[0] as any)?.name;
+    const syncId = await window.api.generateUUID();
+    const total = lowStock.reduce((s, item) => s + (item.reorder_level * 2), 0);
+
+    const poResult = await window.api.dbRun(
+      `INSERT INTO purchase_orders (po_number, supplier_id, supplier_name, status, total_amount, notes, sync_id)
+       VALUES (?, ?, ?, 'draft', ?, 'Auto-generated reorder for low stock items', ?)`,
+      [poNumber, supplierId, supplierName, total, syncId]
+    );
+    const poId = poResult.lastID;
+
+    for (const item of lowStock) {
+      await window.api.dbRun(
+        `INSERT INTO po_items (po_id, medicine_id, medicine_name, quantity, unit_price, amount)
+         VALUES (?, ?, ?, ?, 0, 0)`,
+        [poId, item.medicine_id, item.medicine_name, item.reorder_level * 2]
+      );
+    }
+
+    navigate('/purchase-orders');
+  }
 
   async function handleAddStock(e: React.FormEvent) {
     e.preventDefault();
@@ -152,12 +187,15 @@ export default function StockPage() {
       {lowStockItems.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <AlertTriangle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
+          <div className="flex-1">
             <div className="font-medium text-red-700">Stock Alert</div>
             <div className="text-red-600 text-sm mt-1">
               {lowStockItems.length} item{lowStockItems.length > 1 ? 's' : ''} require attention: {lowStockItems.slice(0, 3).map(i => i.medicine_name).join(', ')}{lowStockItems.length > 3 ? ` and ${lowStockItems.length - 3} more` : ''}.
             </div>
           </div>
+          <button onClick={handleQuickReorder} className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex-shrink-0">
+            <ShoppingBag size={14} /> Quick Reorder
+          </button>
         </div>
       )}
 

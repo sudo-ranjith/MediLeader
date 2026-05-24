@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   authCreateUser: (userData: any, token: string) => ipcRenderer.invoke('auth:create-user', userData, token),
   authSetupAdmin: (email: string, password: string) => ipcRenderer.invoke('auth:setup-admin', email, password),
 
-  // Invoice
+  // Invoice / PO
   generateInvoiceNumber: () => ipcRenderer.invoke('invoice:generate-number'),
   generatePONumber: () => ipcRenderer.invoke('po:generate-number'),
   generateUUID: () => ipcRenderer.invoke('util:uuid'),
@@ -21,4 +21,23 @@ contextBridge.exposeInMainWorld('api', {
   // App
   getVersion: () => ipcRenderer.invoke('app:version'),
   getUserDataPath: () => ipcRenderer.invoke('app:userDataPath'),
+
+  // Cloud Sync
+  syncManual: (token: string) => ipcRenderer.invoke('sync:manual', token),
+  syncGetConflicts: () => ipcRenderer.invoke('sync:get-conflicts'),
+  syncResolveConflict: (id: number) => ipcRenderer.invoke('sync:resolve-conflict', id),
+  onSyncStatus: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('sync:status', handler);
+    return () => ipcRenderer.removeListener('sync:status', handler);
+  },
+  onSyncComplete: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('sync:complete', handler);
+    return () => ipcRenderer.removeListener('sync:complete', handler);
+  },
+
+  // Backup / Restore
+  backupExport: () => ipcRenderer.invoke('backup:export'),
+  backupImport: () => ipcRenderer.invoke('backup:import'),
 });

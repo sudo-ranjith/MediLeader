@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Info } from 'lucide-react';
+import { Save, Plus, Info, Download, Upload, RefreshCw } from 'lucide-react';
 import Modal from '../components/Modal';
 import { dbRun } from '../hooks/useDatabase';
 import { useAuthStore } from '../stores/authStore';
@@ -7,7 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 interface Setting { key: string; value: string; }
 interface User { id: number; email: string; role: string; is_active: number; }
 
-type Tab = 'pharmacy' | 'sync' | 'users' | 'about';
+type Tab = 'pharmacy' | 'sync' | 'users' | 'backup' | 'about';
 
 export default function SettingsPage() {
   const { token, user: currentUser } = useAuthStore();
@@ -21,6 +21,9 @@ export default function SettingsPage() {
   const [addUserError, setAddUserError] = useState('');
   const [appVersion, setAppVersion] = useState('');
   const [dataPath, setDataPath] = useState('');
+  const [backupMsg, setBackupMsg] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -81,10 +84,46 @@ export default function SettingsPage() {
     loadUsers();
   }
 
+  async function handleManualSync() {
+    if (!token) return;
+    setSyncing(true);
+    setSyncMsg('');
+    const result = await window.api.syncManual(token);
+    setSyncing(false);
+    if (result.success) {
+      setSyncMsg(`Sync complete — pulled: ${result.pulled}, pushed: ${result.pushed}`);
+      loadSettings();
+    } else {
+      setSyncMsg('Sync failed: ' + result.error);
+    }
+  }
+
+  async function handleBackupExport() {
+    setBackupMsg('');
+    const result = await window.api.backupExport();
+    if (result.cancelled) return;
+    if (result.success) {
+      setBackupMsg('Backup exported to: ' + result.path);
+    } else {
+      setBackupMsg('Export failed: ' + result.error);
+    }
+  }
+
+  async function handleBackupImport() {
+    if (!confirm('Importing a backup will replace all current data and restart the app. Continue?')) return;
+    setBackupMsg('');
+    const result = await window.api.backupImport();
+    if (result.cancelled) return;
+    if (!result.success) {
+      setBackupMsg('Import failed: ' + result.error);
+    }
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'pharmacy', label: 'Pharmacy Details' },
     { id: 'sync', label: 'Cloud Sync' },
     { id: 'users', label: 'User Management' },
+    { id: 'backup', label: 'Backup & Restore' },
     { id: 'about', label: 'About' },
   ];
 
@@ -179,9 +218,19 @@ export default function SettingsPage() {
           {settings.last_sync_time && (
             <div className="text-sm text-slate-500">Last synced: {settings.last_sync_time}</div>
           )}
-          <button onClick={saveSettings} className="btn-primary" disabled={saving}>
-            <Save size={16} /> {saving ? 'Saving...' : 'Save Sync Settings'}
-          </button>
+          {syncMsg && (
+            <div className={`p-3 rounded-lg text-sm border ${syncMsg.startsWith('Sync failed') ? 'bg-red-50 border-red-200 text-red-700' : 'bg-green-50 border-green-200 text-green-700'}`}>
+              {syncMsg}
+            </div>
+          )}
+          <div className="flex gap-3">
+            <button onClick={saveSettings} className="btn-primary" disabled={saving}>
+              <Save size={16} /> {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+            <button onClick={handleManualSync} className="btn-secondary" disabled={syncing}>
+              <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -216,6 +265,43 @@ export default function SettingsPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Backup & Restore */}
+      {activeTab === 'backup' && (
+        <div className="card space-y-5">
+          <h2 className="font-semibold text-slate-700">Backup & Restore</h2>
+          {backupMsg && (
+            <div className={`p-3 rounded-lg text-sm border ${backupMsg.startsWith('Export failed') || backupMsg.startsWith('Import failed') ? 'bg-red-50 border-red-200 text-red-700' : 'bg-green-50 border-green-200 text-green-700'}`}>
+              {backupMsg}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-slate-200 rounded-xl p-5 space-y-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Download size={20} className="text-blue-600" />
+              </div>
+              <div className="font-semibold text-slate-800">Export Backup</div>
+              <p className="text-sm text-slate-500">Save a copy of the entire database (medicines, stock, invoices, customers, settings) to a file.</p>
+              <button onClick={handleBackupExport} className="btn-primary w-full">
+                <Download size={15} /> Export Database
+              </button>
+            </div>
+            <div className="border border-slate-200 rounded-xl p-5 space-y-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                <Upload size={20} className="text-amber-600" />
+              </div>
+              <div className="font-semibold text-slate-800">Import Backup</div>
+              <p className="text-sm text-slate-500">Restore from a previously exported backup file. The app will restart automatically.</p>
+              <button onClick={handleBackupImport} className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-sm font-medium border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors">
+                <Upload size={15} /> Import & Restore
+              </button>
+            </div>
+          </div>
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+            <strong>Warning:</strong> Importing a backup will permanently replace all current data. Make sure to export a backup of your current data first.
           </div>
         </div>
       )}

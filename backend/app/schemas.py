@@ -172,6 +172,77 @@ class SupplierOut(SupplierBase):
         from_attributes = True
 
 
+class POItemBase(BaseModel):
+    medicine_id: int
+    medicine_name: str
+    quantity: int
+    unit_price: float
+    received_quantity: int = 0
+    batch_number: Optional[str] = None
+    expiry_date: Optional[date] = None
+    amount: float
+
+
+class POItemCreate(POItemBase):
+    pass
+
+
+class POItemOut(POItemBase):
+    id: int
+    po_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseOrderBase(BaseModel):
+    po_number: str
+    supplier_id: int
+    supplier_name: Optional[str] = None
+    date: Optional[date] = None
+    expected_delivery: Optional[date] = None
+    total_amount: float = 0
+    status: str = "draft"
+    notes: Optional[str] = None
+
+
+class PurchaseOrderCreate(PurchaseOrderBase):
+    items: List[POItemCreate] = []
+    sync_id: Optional[str] = None
+
+
+class PurchaseOrderOut(PurchaseOrderBase):
+    id: int
+    sync_id: Optional[str]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+    items: List[POItemOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class PaymentBase(BaseModel):
+    invoice_id: int
+    amount: float
+    method: str = "cash"
+    date: Optional[date] = None
+    notes: Optional[str] = None
+
+
+class PaymentCreate(PaymentBase):
+    sync_id: Optional[str] = None
+
+
+class PaymentOut(PaymentBase):
+    id: int
+    sync_id: Optional[str]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
 class SyncPullRequest(BaseModel):
     last_sync_time: str
 

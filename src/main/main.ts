@@ -1,11 +1,14 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { initDatabase } from './db';
 import { hashPassword, verifyPassword, signToken, verifyToken } from './auth';
+import { doSync, startSyncTimer, stopSyncTimer } from './sync';
 import { v4 as uuidv4 } from 'uuid';
 
 let mainWindow: BrowserWindow | null = null;
 let db: any;
+let currentToken: string | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -47,6 +50,7 @@ app.whenReady().then(() => {
   db = initDatabase();
   registerIPCHandlers();
   createWindow();
+  startSyncTimer(db, mainWindow, () => currentToken);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -54,6 +58,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopSyncTimer();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -110,6 +115,7 @@ function registerIPCHandlers() {
       if (!valid) return { error: 'Invalid password' };
 
       const token = signToken({ id: user.id, email: user.email, role: user.role });
+      currentToken = token;
       return { token, user: { id: user.id, email: user.email, role: user.role } };
     } catch (err: any) {
       return { error: err.message };
@@ -171,4 +177,57 @@ function registerIPCHandlers() {
   // App info
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('app:userDataPath', () => app.getPath('userData'));
+
+  // Sync handlers
+  ipcMain.handle('sync:manual', async (_event, token: string) => {
+    currentToken = token;
+    return doSync(db, mainWindow, token);
+  });
+
+  ipcMain.handle('sync:get-conflicts', () => {
+    return db.prepare(`SELECT * FROM sync_conflicts ORDER BY created_at DESC`).all();
+  });
+
+  ipcMain.handle('sync:resolve-conflict', (_event, id: number) => {
+    db.prepare(`DELETE FROM sync_conflicts WHERE id = ?`).run(id);
+    return { success: true };
+  });
+
+  // Backup / Restore handlers
+  ipcMain.handle('backup:export', async () => {
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Export Database Backup',
+      defaultPath: `pharma-vault-backup-${new Date().toISOString().split('T')[0]}.db`,
+      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+    });
+    if (!filePath) return { success: false, cancelled: true };
+    const dbPath = path.join(app.getPath('userData'), 'pharma-vault.db');
+    try {
+      fs.copyFileSync(dbPath, filePath);
+      return { success: true, path: filePath };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('backup:import', async () => {
+    const { filePaths } = await dialog.showOpenDialog({
+      title: 'Import Database Backup',
+      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+      properties: ['openFile'],
+    });
+    if (!filePaths.length) return { success: false, cancelled: true };
+    const dbPath = path.join(app.getPath('userData'), 'pharma-vault.db');
+    const safePath = path.join(app.getPath('userData'), `pharma-vault-pre-restore-${Date.now()}.db`);
+    try {
+      fs.copyFileSync(dbPath, safePath);
+      fs.copyFileSync(filePaths[0], dbPath);
+      app.relaunch();
+      app.exit(0);
+      return { success: true };
+    } catch (err: any) {
+      try { fs.copyFileSync(safePath, dbPath); } catch {}
+      return { success: false, error: err.message };
+    }
+  });
 }

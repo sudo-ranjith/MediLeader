@@ -11,6 +11,7 @@ import SuppliersPage from './pages/SuppliersPage';
 import PurchaseOrderPage from './pages/PurchaseOrderPage';
 import ReportsPage from './pages/ReportsPage';
 import SettingsPage from './pages/SettingsPage';
+import ConflictsPage from './pages/ConflictsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useAuthStore();
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="purchase-orders" element={<PurchaseOrderPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="conflicts" element={<ConflictsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

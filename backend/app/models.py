@@ -159,3 +159,15 @@ class POItem(Base):
     amount = Column(Float, nullable=False)
 
     po = relationship("PurchaseOrder", back_populates="items")
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    method = Column(String, default="cash")
+    date = Column(Date, default=datetime.utcnow)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sync_id = Column(String, unique=True, nullable=True)

@@ -19,6 +19,14 @@ async def list_customers(
     return q.order_by(models.Customer.name).offset(skip).limit(limit).all()
 
 
+@router.get("/{customer_id}", response_model=schemas.CustomerOut)
+async def get_customer(customer_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    c = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return c
+
+
 @router.post("/", response_model=schemas.CustomerOut)
 async def create_customer(data: schemas.CustomerCreate, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
     customer = models.Customer(**data.model_dump(exclude_none=True))

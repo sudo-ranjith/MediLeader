@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .database import engine, Base
-from .routes import auth, medicines, customers, invoices, sync, reports
+from .routes import auth, medicines, customers, invoices, sync, reports, stock, suppliers, purchase_orders, payments
 
 load_dotenv()
 
@@ -28,8 +28,12 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(medicines.router)
+app.include_router(stock.router)
 app.include_router(customers.router)
 app.include_router(invoices.router)
+app.include_router(suppliers.router)
+app.include_router(purchase_orders.router)
+app.include_router(payments.router)
 app.include_router(sync.router)
 app.include_router(reports.router)
 

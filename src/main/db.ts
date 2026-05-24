@@ -165,6 +165,14 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id INTEGER PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  sync_id TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(entity_type, sync_id)
+);
 `;
 
 const defaultSettings = [

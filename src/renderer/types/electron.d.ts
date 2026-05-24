@@ -16,6 +16,13 @@ declare global {
       generateUUID: () => Promise<string>;
       getVersion: () => Promise<string>;
       getUserDataPath: () => Promise<string>;
+      syncManual: (token: string) => Promise<{ success: boolean; error?: string; pulled?: number; pushed?: number; conflicts?: number }>;
+      syncGetConflicts: () => Promise<Array<{ id: number; entity_type: string; sync_id: string; created_at: string }>>;
+      syncResolveConflict: (id: number) => Promise<{ success: boolean }>;
+      onSyncStatus: (callback: (data: { syncing: boolean; lastSync?: string; error?: string }) => void) => () => void;
+      onSyncComplete: (callback: (data: { success: boolean; pulled?: number; pushed?: number; conflicts?: number }) => void) => () => void;
+      backupExport: () => Promise<{ success: boolean; path?: string; error?: string; cancelled?: boolean }>;
+      backupImport: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>;
     };
   }
 }
