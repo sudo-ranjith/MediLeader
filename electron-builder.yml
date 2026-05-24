@@ -1,0 +1,21 @@
+appId: com.pharmavault.app
+productName: Pharma Vault
+directories:
+  output: release
+files:
+  - dist-electron
+  - dist
+  - node_modules
+win:
+  target:
+    - nsis
+    - portable
+mac:
+  target:
+    - dmg
+linux:
+  target:
+    - AppImage
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
