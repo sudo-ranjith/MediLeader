@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 interface User {
   id: number;
@@ -15,6 +15,31 @@ interface AuthState {
   logout: () => void;
 }
 
+// Secure async storage: encrypts via Electron safeStorage before writing to localStorage.
+// Falls back to plain localStorage if running outside Electron (e.g., browser dev mode).
+const secureStorage = createJSONStorage<AuthState>(() => ({
+  getItem: async (name: string) => {
+    const raw = localStorage.getItem(name);
+    if (!raw) return null;
+    if (typeof window.api?.authDecrypt === 'function') {
+      const decrypted = await window.api.authDecrypt(raw);
+      return decrypted ?? null;
+    }
+    return raw;
+  },
+  setItem: async (name: string, value: string) => {
+    if (typeof window.api?.authEncrypt === 'function') {
+      const encrypted = await window.api.authEncrypt(value);
+      localStorage.setItem(name, encrypted);
+    } else {
+      localStorage.setItem(name, value);
+    }
+  },
+  removeItem: (name: string) => {
+    localStorage.removeItem(name);
+  },
+}));
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -26,6 +51,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'pharma-vault-auth',
+      storage: secureStorage,
     }
   )
 );

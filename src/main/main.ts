@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, safeStorage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { initDatabase } from './db';
@@ -191,6 +191,25 @@ function registerIPCHandlers() {
   ipcMain.handle('sync:resolve-conflict', (_event, id: number) => {
     db.prepare(`DELETE FROM sync_conflicts WHERE id = ?`).run(id);
     return { success: true };
+  });
+
+  // Secure storage for JWT tokens
+  ipcMain.handle('auth:encrypt', (_event, data: string) => {
+    if (safeStorage.isEncryptionAvailable()) {
+      return safeStorage.encryptString(data).toString('base64');
+    }
+    return data;
+  });
+
+  ipcMain.handle('auth:decrypt', (_event, data: string) => {
+    if (safeStorage.isEncryptionAvailable()) {
+      try {
+        return safeStorage.decryptString(Buffer.from(data, 'base64'));
+      } catch {
+        return null;
+      }
+    }
+    return data;
   });
 
   // Backup / Restore handlers

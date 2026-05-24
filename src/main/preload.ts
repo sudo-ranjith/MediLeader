@@ -40,4 +40,8 @@ contextBridge.exposeInMainWorld('api', {
   // Backup / Restore
   backupExport: () => ipcRenderer.invoke('backup:export'),
   backupImport: () => ipcRenderer.invoke('backup:import'),
+
+  // Secure storage
+  authEncrypt: (data: string) => ipcRenderer.invoke('auth:encrypt', data),
+  authDecrypt: (data: string) => ipcRenderer.invoke('auth:decrypt', data),
 });

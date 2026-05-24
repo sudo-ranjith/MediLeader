@@ -3,6 +3,7 @@ import { Save, Plus, Info, Download, Upload, RefreshCw } from 'lucide-react';
 import Modal from '../components/Modal';
 import { dbRun } from '../hooks/useDatabase';
 import { useAuthStore } from '../stores/authStore';
+import { setLanguage, getLanguage, type Lang } from '../i18n';
 
 interface Setting { key: string; value: string; }
 interface User { id: number; email: string; role: string; is_active: number; }
@@ -24,6 +25,7 @@ export default function SettingsPage() {
   const [backupMsg, setBackupMsg] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
+  const [language, setLang] = useState<Lang>(getLanguage());
 
   useEffect(() => {
     loadSettings();
@@ -182,6 +184,17 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">PO Prefix</label>
               <input className="input" value={settings.po_prefix || 'PO'} onChange={e => updateSetting('po_prefix', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Language / மொழி</label>
+              <select
+                className="select"
+                value={language}
+                onChange={e => { const l = e.target.value as Lang; setLang(l); setLanguage(l); }}
+              >
+                <option value="en">English</option>
+                <option value="ta">தமிழ் (Tamil)</option>
+              </select>
             </div>
           </div>
           <button onClick={saveSettings} className="btn-primary" disabled={saving}>

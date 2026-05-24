@@ -23,6 +23,8 @@ declare global {
       onSyncComplete: (callback: (data: { success: boolean; pulled?: number; pushed?: number; conflicts?: number }) => void) => () => void;
       backupExport: () => Promise<{ success: boolean; path?: string; error?: string; cancelled?: boolean }>;
       backupImport: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>;
+      authEncrypt: (data: string) => Promise<string>;
+      authDecrypt: (data: string) => Promise<string | null>;
     };
   }
 }

@@ -274,6 +274,21 @@ export default function ReportsPage() {
 
           {/* Medicine Sales Tab */}
           {activeTab === 'medicine-sales' && (
+            <div className="space-y-4">
+            {medicineSales.length > 0 && (
+              <div className="card">
+                <h3 className="font-semibold text-slate-700 mb-4">Top Medicines by Revenue</h3>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={medicineSales.slice(0, 10)} layout="vertical" margin={{ left: 120, right: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `₹${v}`} />
+                    <YAxis type="category" dataKey="medicine_name" tick={{ fontSize: 11 }} width={120} />
+                    <Tooltip formatter={(v: number) => [formatCurrency(v), 'Revenue']} />
+                    <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
             <div className="card p-0">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50">
@@ -297,6 +312,7 @@ export default function ReportsPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
             </div>
           )}
 
