@@ -1,199 +1,245 @@
 import { useState, useEffect } from 'react';
-import { Download, TrendingUp, Package, AlertTriangle, CreditCard, BarChart2 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts';
-import { dbSelect, dbGet } from '../hooks/useDatabase';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { Download, TrendingUp, Package, AlertTriangle, CreditCard } from 'lucide-react';
 import { formatCurrency } from '../utils/gstCalculator';
+import { differenceInDays, parseISO } from 'date-fns';
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
-
-type Tab = 'sales' | 'medicines' | 'expiry' | 'credit' | 'valuation';
+type Tab = 'daily-sales' | 'medicine-sales' | 'expiry' | 'credit' | 'inventory';
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('sales');
-  const [dateFrom, setDateFrom] = useState(() => {
+  const [activeTab, setActiveTab] = useState<Tab>('daily-sales');
+  const [startDate, setStartDate] = useState(() => {
     const d = new Date();
-    d.setDate(1);
+    d.setDate(d.getDate() - 30);
     return d.toISOString().split('T')[0];
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(false);
-  const [salesSummary, setSalesSummary] = useState<any>(null);
-  const [dailySales, setDailySales] = useState<any[]>([]);
+
+  // Daily Sales State
+  const [dailySalesData, setDailySalesData] = useState<any[]>([]);
+  const [salesMetrics, setSalesMetrics] = useState({ revenue: 0, gst: 0, transactions: 0 });
+
+  // Medicine Sales State
   const [medicineSales, setMedicineSales] = useState<any[]>([]);
-  const [expiryItems, setExpiryItems] = useState<any[]>([]);
-  const [creditReport, setCreditReport] = useState<any[]>([]);
-  const [inventoryVal, setInventoryVal] = useState<any>(null);
-  const [inventoryByMed, setInventoryByMed] = useState<any[]>([]);
 
-  useEffect(() => { loadReport(); }, [activeTab, dateFrom, dateTo]);
+  // Expiry State
+  const [expiryData, setExpiryData] = useState<any[]>([]);
 
-  async function loadReport() {
+  // Credit State
+  const [creditData, setCreditData] = useState<any[]>([]);
+
+  // Inventory State
+  const [inventoryData, setInventoryData] = useState<{ totalValue: number; totalItems: number; rows: any[] }>({ totalValue: 0, totalItems: 0, rows: [] });
+
+  useEffect(() => { loadTabData(); }, [activeTab, startDate, endDate]);
+
+  async function loadTabData() {
     setLoading(true);
     try {
-      if (activeTab === 'sales') await loadSales();
-      else if (activeTab === 'medicines') await loadMedicineSales();
+      if (activeTab === 'daily-sales') await loadDailySales();
+      else if (activeTab === 'medicine-sales') await loadMedicineSales();
       else if (activeTab === 'expiry') await loadExpiry();
       else if (activeTab === 'credit') await loadCredit();
-      else await loadValuation();
-    } finally { setLoading(false); }
+      else if (activeTab === 'inventory') await loadInventory();
+    } finally {
+      setLoading(false);
+    }
   }
 
-  async function loadSales() {
-    const [summary, daily] = await Promise.all([
-      dbGet(`SELECT COUNT(*) as transactions, COALESCE(SUM(total),0) as revenue, COALESCE(SUM(gst_amount),0) as gst_collected, COALESCE(AVG(total),0) as avg_transaction
-             FROM invoices WHERE date BETWEEN ? AND ? AND status='paid'`, [dateFrom, dateTo]),
-      dbSelect(`SELECT date, COALESCE(SUM(total),0) as total FROM invoices WHERE date BETWEEN ? AND ? AND status='paid' GROUP BY date ORDER BY date`, [dateFrom, dateTo]),
-    ]);
-    setSalesSummary(summary);
-    setDailySales(daily as any[]);
+  async function loadDailySales() {
+    const rows = await window.api.dbSelect(
+      `SELECT date, COALESCE(SUM(total),0) as revenue, COALESCE(SUM(gst_amount),0) as gst, COUNT(*) as transactions
+       FROM invoices WHERE date BETWEEN ? AND ? AND status = 'paid'
+       GROUP BY date ORDER BY date ASC`,
+      [startDate, endDate]
+    );
+    setDailySalesData(rows);
+    const rev = rows.reduce((s: number, r: any) => s + r.revenue, 0);
+    const gst = rows.reduce((s: number, r: any) => s + r.gst, 0);
+    const txn = rows.reduce((s: number, r: any) => s + r.transactions, 0);
+    setSalesMetrics({ revenue: rev, gst, transactions: txn });
   }
 
   async function loadMedicineSales() {
-    const data = await dbSelect(
-      `SELECT m.name, SUM(ii.quantity) as qty_sold, SUM(ii.item_total) as revenue,
-              SUM(ii.quantity * (m.price - m.cost)) as profit
-       FROM invoice_items ii JOIN medicines m ON m.id=ii.medicine_id
-       JOIN invoices i ON i.id=ii.invoice_id
-       WHERE i.date BETWEEN ? AND ? AND i.status='paid'
-       GROUP BY m.id ORDER BY revenue DESC`,
-      [dateFrom, dateTo]
+    const rows = await window.api.dbSelect(
+      `SELECT ii.medicine_name, SUM(ii.quantity) as qty_sold, SUM(ii.item_total) as revenue,
+              SUM(ii.item_total - (m.cost * ii.quantity)) as profit
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       JOIN medicines m ON ii.medicine_id = m.id
+       WHERE inv.date BETWEEN ? AND ? AND inv.status = 'paid'
+       GROUP BY ii.medicine_id, ii.medicine_name
+       ORDER BY revenue DESC`,
+      [startDate, endDate]
     );
-    setMedicineSales(data as any[]);
+    setMedicineSales(rows);
   }
 
   async function loadExpiry() {
-    const data = await dbSelect(
-      `SELECT m.name, s.batch_number, s.expiry_date, s.quantity,
-              CAST((julianday(s.expiry_date) - julianday('now')) AS INTEGER) as days_left
-       FROM stock s JOIN medicines m ON m.id=s.medicine_id
-       WHERE s.quantity > 0 ORDER BY days_left ASC`,
+    const rows = await window.api.dbSelect(
+      `SELECT s.batch_number, s.expiry_date, s.quantity, m.name as medicine_name
+       FROM stock s JOIN medicines m ON s.medicine_id = m.id
+       WHERE s.quantity > 0
+       ORDER BY s.expiry_date ASC`,
       []
     );
-    setExpiryItems(data as any[]);
+    setExpiryData(rows);
   }
 
   async function loadCredit() {
-    const data = await dbSelect(
-      `SELECT name, credit_limit, credit_used, ROUND(CASE WHEN credit_limit>0 THEN (credit_used*100.0/credit_limit) ELSE 0 END,1) as pct
-       FROM customers WHERE credit_limit > 0 ORDER BY credit_used DESC`,
+    const rows = await window.api.dbSelect(
+      `SELECT name, phone, credit_limit, credit_used,
+              CASE WHEN credit_limit > 0 THEN ROUND((credit_used * 100.0 / credit_limit), 1) ELSE 0 END as utilization
+       FROM customers WHERE credit_used > 0 ORDER BY credit_used DESC`,
       []
     );
-    setCreditReport(data as any[]);
+    setCreditData(rows);
   }
 
-  async function loadValuation() {
-    const [total, byMed] = await Promise.all([
-      dbGet(`SELECT COUNT(DISTINCT m.id) as medicines, SUM(s.quantity) as total_units, COALESCE(SUM(s.quantity * m.cost),0) as cost_value, COALESCE(SUM(s.quantity * m.price),0) as mrp_value FROM stock s JOIN medicines m ON m.id=s.medicine_id WHERE s.quantity > 0`, []),
-      dbSelect(`SELECT m.name, SUM(s.quantity) as total_qty, COALESCE(SUM(s.quantity * m.cost),0) as value FROM stock s JOIN medicines m ON m.id=s.medicine_id WHERE s.quantity > 0 GROUP BY m.id ORDER BY value DESC LIMIT 10`, []),
-    ]);
-    setInventoryVal(total);
-    setInventoryByMed(byMed as any[]);
+  async function loadInventory() {
+    const rows = await window.api.dbSelect(
+      `SELECT m.name, SUM(s.quantity) as total_qty, m.cost, SUM(s.quantity * m.cost) as total_value
+       FROM stock s JOIN medicines m ON s.medicine_id = m.id
+       WHERE s.quantity > 0
+       GROUP BY m.id, m.name, m.cost
+       ORDER BY total_value DESC`,
+      []
+    );
+    const totalValue = rows.reduce((s: number, r: any) => s + r.total_value, 0);
+    const totalItems = rows.reduce((s: number, r: any) => s + r.total_qty, 0);
+    setInventoryData({ totalValue, totalItems, rows });
   }
 
   function exportCSV(data: any[], filename: string) {
-    if (!data.length) return;
-    const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).map(v => `"${v}"`).join(','))].join('\n');
+    if (data.length === 0) return;
+    const headers = Object.keys(data[0]);
+    const rows = data.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','));
+    const csv = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
+    a.href = url; a.download = filename + '.csv'; a.click();
     URL.revokeObjectURL(url);
   }
 
-  const tabs: { id: Tab; label: string; icon: any }[] = [
-    { id: 'sales', label: 'Daily Sales', icon: TrendingUp },
-    { id: 'medicines', label: 'Medicine Sales', icon: BarChart2 },
+  function getExpiryBadge(expiryDate: string) {
+    const days = differenceInDays(parseISO(expiryDate), new Date());
+    if (days < 0) return { label: 'Expired', cls: 'badge-red' };
+    if (days <= 30) return { label: `${days}d`, cls: 'badge-red' };
+    if (days <= 60) return { label: `${days}d`, cls: 'badge-yellow' };
+    if (days <= 90) return { label: `${days}d`, cls: 'badge-yellow' };
+    return { label: `${days}d`, cls: 'badge-green' };
+  }
+
+  const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
+    { id: 'daily-sales', label: 'Daily Sales', icon: TrendingUp },
+    { id: 'medicine-sales', label: 'Medicine Sales', icon: Package },
     { id: 'expiry', label: 'Expiry Tracking', icon: AlertTriangle },
     { id: 'credit', label: 'Credit Report', icon: CreditCard },
-    { id: 'valuation', label: 'Inventory Value', icon: Package },
+    { id: 'inventory', label: 'Inventory Value', icon: Package },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="page-header">
-        <h2 className="page-title">Reports & Analytics</h2>
-      </div>
-
       {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === t.id ? 'bg-white shadow text-blue-600' : 'text-slate-600 hover:text-slate-800'}`}>
-            <t.icon size={16} />{t.label}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 overflow-x-auto">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+              activeTab === tab.id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <tab.icon size={14} />
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Date Filter (not for expiry, credit, valuation) */}
-      {['sales', 'medicines'].includes(activeTab) && (
-        <div className="card p-4 flex items-center gap-4">
-          <label className="text-sm font-medium text-slate-600">Date Range:</label>
-          <input type="date" className="input w-40" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          <span className="text-slate-400">to</span>
-          <input type="date" className="input w-40" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+      {/* Date Range (for relevant tabs) */}
+      {(activeTab === 'daily-sales' || activeTab === 'medicine-sales') && (
+        <div className="card">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-slate-600">From:</label>
+              <input type="date" className="input w-40" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-slate-600">To:</label>
+              <input type="date" className="input w-40" value={endDate} onChange={e => setEndDate(e.target.value)} />
+            </div>
+            <button onClick={loadTabData} className="btn-primary">Apply</button>
+            <button onClick={() => exportCSV(activeTab === 'daily-sales' ? dailySalesData : medicineSales, activeTab)}
+              className="btn-secondary ml-auto"><Download size={14} /> Export CSV</button>
+          </div>
         </div>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center h-48"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+        <div className="card flex items-center justify-center py-16">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+        </div>
       ) : (
         <>
-          {activeTab === 'sales' && salesSummary && (
+          {/* Daily Sales Tab */}
+          {activeTab === 'daily-sales' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-4 gap-4">
-                {[
-                  { label: 'Total Revenue', value: formatCurrency(salesSummary.revenue) },
-                  { label: 'GST Collected', value: formatCurrency(salesSummary.gst_collected) },
-                  { label: 'Transactions', value: salesSummary.transactions },
-                  { label: 'Avg. Transaction', value: formatCurrency(salesSummary.avg_transaction) },
-                ].map(m => (
-                  <div key={m.label} className="card text-center">
-                    <div className="text-slate-500 text-sm">{m.label}</div>
-                    <div className="text-2xl font-bold text-slate-800 mt-1">{m.value}</div>
-                  </div>
-                ))}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="card text-center">
+                  <div className="text-slate-500 text-sm">Total Revenue</div>
+                  <div className="text-2xl font-bold text-slate-800 mt-1">{formatCurrency(salesMetrics.revenue)}</div>
+                </div>
+                <div className="card text-center">
+                  <div className="text-slate-500 text-sm">GST Collected</div>
+                  <div className="text-2xl font-bold text-blue-700 mt-1">{formatCurrency(salesMetrics.gst)}</div>
+                </div>
+                <div className="card text-center">
+                  <div className="text-slate-500 text-sm">Transactions</div>
+                  <div className="text-2xl font-bold text-green-700 mt-1">{salesMetrics.transactions}</div>
+                </div>
               </div>
               <div className="card">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-700">Daily Revenue</h3>
-                  <button onClick={() => exportCSV(dailySales, 'daily-sales.csv')} className="btn-secondary text-xs py-1"><Download size={12} />Export</button>
-                </div>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={dailySales}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `₹${v}`} />
-                    <Tooltip formatter={(v: any) => [formatCurrency(Number(v)), 'Revenue']} />
-                    <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <h3 className="font-semibold text-slate-700 mb-4">Daily Revenue</h3>
+                {dailySalesData.length === 0 ? (
+                  <div className="text-center py-8 text-slate-400">No data for selected period</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={dailySalesData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `₹${v}`} />
+                      <Tooltip formatter={(v: number) => [`₹${v.toFixed(2)}`, 'Revenue']} />
+                      <Line type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
           )}
 
-          {activeTab === 'medicines' && (
+          {/* Medicine Sales Tab */}
+          {activeTab === 'medicine-sales' && (
             <div className="card p-0">
-              <div className="p-4 flex items-center justify-between border-b border-slate-200">
-                <h3 className="font-semibold text-slate-700">Medicine-wise Sales</h3>
-                <button onClick={() => exportCSV(medicineSales, 'medicine-sales.csv')} className="btn-secondary text-xs py-1"><Download size={12} />Export CSV</button>
-              </div>
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Medicine', 'Qty Sold', 'Revenue', 'Profit'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600">{h}</th>
-                    ))}
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-500">Medicine</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-500">Qty Sold</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-500">Revenue</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-500">Profit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {medicineSales.length === 0 ? (
-                    <tr><td colSpan={4} className="text-center py-8 text-slate-400">No sales data for selected period</td></tr>
-                  ) : medicineSales.map((r: any, i) => (
-                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium">{r.name}</td>
-                      <td className="px-4 py-3">{r.qty_sold}</td>
-                      <td className="px-4 py-3">{formatCurrency(r.revenue)}</td>
-                      <td className={`px-4 py-3 font-medium ${r.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(r.profit)}</td>
+                    <tr><td colSpan={4} className="text-center py-8 text-slate-400">No sales data found</td></tr>
+                  ) : medicineSales.map((row: any, i) => (
+                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium">{row.medicine_name}</td>
+                      <td className="px-4 py-3 text-right">{row.qty_sold}</td>
+                      <td className="px-4 py-3 text-right font-medium">{formatCurrency(row.revenue)}</td>
+                      <td className="px-4 py-3 text-right text-green-600 font-medium">{formatCurrency(row.profit || 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -201,73 +247,88 @@ export default function ReportsPage() {
             </div>
           )}
 
+          {/* Expiry Tracking Tab */}
           {activeTab === 'expiry' && (
-            <div className="card p-0">
-              <div className="p-4 flex items-center justify-between border-b border-slate-200">
-                <h3 className="font-semibold text-slate-700">Expiry Tracking</h3>
-                <button onClick={() => exportCSV(expiryItems, 'expiry-report.csv')} className="btn-secondary text-xs py-1"><Download size={12} />Export</button>
+            <div className="space-y-4">
+              <div className="grid grid-cols-4 gap-4 text-sm">
+                {[
+                  { label: 'Expired', filter: (d: number) => d < 0, cls: 'bg-red-50 border-red-200 text-red-700' },
+                  { label: 'Expiring in 30 days', filter: (d: number) => d >= 0 && d <= 30, cls: 'bg-orange-50 border-orange-200 text-orange-700' },
+                  { label: 'Expiring in 60 days', filter: (d: number) => d > 30 && d <= 60, cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+                  { label: 'Expiring in 90 days', filter: (d: number) => d > 60 && d <= 90, cls: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
+                ].map(({ label, filter, cls }) => {
+                  const count = expiryData.filter((r: any) => filter(differenceInDays(parseISO(r.expiry_date), new Date()))).length;
+                  return (
+                    <div key={label} className={`border rounded-lg p-3 ${cls}`}>
+                      <div className="font-bold text-xl">{count}</div>
+                      <div className="text-xs mt-1">{label}</div>
+                    </div>
+                  );
+                })}
               </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Medicine', 'Batch', 'Expiry Date', 'Days Left', 'Qty', 'Status'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {expiryItems.map((r: any, i) => (
-                    <tr key={i} className="border-b border-slate-100">
-                      <td className="px-4 py-3 font-medium">{r.name}</td>
-                      <td className="px-4 py-3 text-slate-500">{r.batch_number}</td>
-                      <td className="px-4 py-3">{r.expiry_date}</td>
-                      <td className="px-4 py-3">
-                        <span className={r.days_left < 0 ? 'text-red-600 font-semibold' : r.days_left <= 30 ? 'text-amber-600 font-semibold' : 'text-slate-600'}>
-                          {r.days_left < 0 ? `Expired ${Math.abs(r.days_left)}d ago` : `${r.days_left}d`}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">{r.quantity}</td>
-                      <td className="px-4 py-3">
-                        {r.days_left < 0 ? <span className="badge-red">Expired</span>
-                          : r.days_left <= 30 ? <span className="badge-yellow">Expiring Soon</span>
-                          : <span className="badge-green">OK</span>}
-                      </td>
+              <div className="card p-0">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-semibold text-slate-500">Medicine</th>
+                      <th className="text-left px-4 py-3 font-semibold text-slate-500">Batch</th>
+                      <th className="text-left px-4 py-3 font-semibold text-slate-500">Expiry Date</th>
+                      <th className="text-center px-4 py-3 font-semibold text-slate-500">Days</th>
+                      <th className="text-right px-4 py-3 font-semibold text-slate-500">Qty</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {expiryData.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center py-8 text-slate-400">No expiry data</td></tr>
+                    ) : expiryData.map((row: any, i) => {
+                      const badge = getExpiryBadge(row.expiry_date);
+                      return (
+                        <tr key={i} className="border-t border-slate-100">
+                          <td className="px-4 py-3 font-medium">{row.medicine_name}</td>
+                          <td className="px-4 py-3 text-slate-500">{row.batch_number}</td>
+                          <td className="px-4 py-3">{row.expiry_date}</td>
+                          <td className="px-4 py-3 text-center"><span className={badge.cls}>{badge.label}</span></td>
+                          <td className="px-4 py-3 text-right font-medium">{row.quantity}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
+          {/* Credit Report Tab */}
           {activeTab === 'credit' && (
             <div className="card p-0">
-              <div className="p-4 flex items-center justify-between border-b border-slate-200">
-                <h3 className="font-semibold text-slate-700">Customer Credit Report</h3>
-                <button onClick={() => exportCSV(creditReport, 'credit-report.csv')} className="btn-secondary text-xs py-1"><Download size={12} />Export</button>
-              </div>
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Customer', 'Credit Limit', 'Credit Used', 'Available', '% Utilized'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600">{h}</th>
-                    ))}
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-500">Customer</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-500">Phone</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-500">Credit Limit</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-500">Credit Used</th>
+                    <th className="text-center px-4 py-3 font-semibold text-slate-500">Utilization</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {creditReport.length === 0 ? (
-                    <tr><td colSpan={5} className="text-center py-8 text-slate-400">No customers with credit limits</td></tr>
-                  ) : creditReport.map((r: any, i) => (
-                    <tr key={i} className="border-b border-slate-100">
-                      <td className="px-4 py-3 font-medium">{r.name}</td>
-                      <td className="px-4 py-3">{formatCurrency(r.credit_limit)}</td>
-                      <td className="px-4 py-3 text-amber-600">{formatCurrency(r.credit_used)}</td>
-                      <td className={`px-4 py-3 font-medium ${r.credit_limit - r.credit_used <= 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(r.credit_limit - r.credit_used)}</td>
+                  {creditData.length === 0 ? (
+                    <tr><td colSpan={5} className="text-center py-8 text-slate-400">No outstanding credit</td></tr>
+                  ) : creditData.map((row: any, i) => (
+                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium">{row.name}</td>
+                      <td className="px-4 py-3 text-slate-500">{row.phone || '-'}</td>
+                      <td className="px-4 py-3 text-right">{formatCurrency(row.credit_limit)}</td>
+                      <td className="px-4 py-3 text-right text-amber-600 font-medium">{formatCurrency(row.credit_used)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-500 rounded-full" style={{ width: `${Math.min(r.pct, 100)}%` }} />
+                          <div className="flex-1 bg-slate-200 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full ${row.utilization >= 90 ? 'bg-red-500' : row.utilization >= 70 ? 'bg-amber-500' : 'bg-green-500'}`}
+                              style={{ width: `${Math.min(row.utilization, 100)}%` }}
+                            />
                           </div>
-                          <span className="text-xs">{r.pct}%</span>
+                          <span className="text-xs font-medium text-slate-600 w-10 text-right">{row.utilization}%</span>
                         </div>
                       </td>
                     </tr>
@@ -277,32 +338,47 @@ export default function ReportsPage() {
             </div>
           )}
 
-          {activeTab === 'valuation' && inventoryVal && (
+          {/* Inventory Valuation Tab */}
+          {activeTab === 'inventory' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-4 gap-4">
-                {[
-                  { label: 'Total Medicines', value: inventoryVal.medicines },
-                  { label: 'Total Units', value: inventoryVal.total_units },
-                  { label: 'Cost Value', value: formatCurrency(inventoryVal.cost_value) },
-                  { label: 'MRP Value', value: formatCurrency(inventoryVal.mrp_value) },
-                ].map(m => (
-                  <div key={m.label} className="card text-center">
-                    <div className="text-slate-500 text-sm">{m.label}</div>
-                    <div className="text-2xl font-bold text-slate-800 mt-1">{m.value}</div>
-                  </div>
-                ))}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="card text-center">
+                  <div className="text-slate-500 text-sm">Total Inventory Value</div>
+                  <div className="text-2xl font-bold text-slate-800 mt-1">{formatCurrency(inventoryData.totalValue)}</div>
+                </div>
+                <div className="card text-center">
+                  <div className="text-slate-500 text-sm">Total Stock Items</div>
+                  <div className="text-2xl font-bold text-blue-700 mt-1">{inventoryData.totalItems}</div>
+                </div>
               </div>
-              <div className="card">
-                <h3 className="font-semibold text-slate-700 mb-4">Top 10 Medicines by Value</h3>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={inventoryByMed} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `₹${v}`} />
-                    <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: any) => [formatCurrency(Number(v)), 'Value']} />
-                    <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="flex justify-end">
+                <button onClick={() => exportCSV(inventoryData.rows, 'inventory-valuation')} className="btn-secondary">
+                  <Download size={14} /> Export CSV
+                </button>
+              </div>
+              <div className="card p-0">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-semibold text-slate-500">Medicine</th>
+                      <th className="text-right px-4 py-3 font-semibold text-slate-500">Total Qty</th>
+                      <th className="text-right px-4 py-3 font-semibold text-slate-500">Cost/Unit</th>
+                      <th className="text-right px-4 py-3 font-semibold text-slate-500">Total Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventoryData.rows.length === 0 ? (
+                      <tr><td colSpan={4} className="text-center py-8 text-slate-400">No inventory data</td></tr>
+                    ) : inventoryData.rows.map((row: any, i) => (
+                      <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium">{row.name}</td>
+                        <td className="px-4 py-3 text-right">{row.total_qty}</td>
+                        <td className="px-4 py-3 text-right text-slate-500">{formatCurrency(row.cost)}</td>
+                        <td className="px-4 py-3 text-right font-medium text-blue-700">{formatCurrency(row.total_value)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
