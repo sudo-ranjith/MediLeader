@@ -2,9 +2,10 @@
   "name": "pharma-vault",
   "version": "1.0.0",
   "description": "Offline-first pharmacy management system for Tamil Nadu",
-  "main": "dist-electron/main.js",
+  "type": "module",
+  "main": "dist-electron/main.mjs",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "vite",
     "build": "tsc && vite build && tsc -p tsconfig.node.json",
     "build:electron": "npm run build && electron-builder",
     "preview": "vite preview",
@@ -13,20 +14,22 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^9.4.3",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.6.0",
     "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.363.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.22.3",
-    "zustand": "^4.5.2",
     "recharts": "^2.12.3",
-    "lucide-react": "^0.363.0",
-    "date-fns": "^3.6.0",
     "uuid": "^9.0.1",
-    "clsx": "^2.1.0"
+    "xlsx": "^0.18.5",
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.8",
     "@types/jsonwebtoken": "^9.0.6",
@@ -35,25 +38,40 @@
     "@types/react-dom": "^18.2.22",
     "@types/uuid": "^9.0.8",
     "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/ui": "^1.4.0",
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
-    "electron": "^29.1.4",
+    "electron": "^29.4.6",
     "electron-builder": "^24.13.3",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.3",
     "typescript": "^5.2.2",
     "vite": "^5.2.0",
-    "wait-on": "^7.2.0",
+    "vite-plugin-electron": "^0.29.1",
+    "vite-plugin-electron-renderer": "^0.14.7",
     "vitest": "^1.4.0",
-    "@vitest/ui": "^1.4.0"
+    "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.pharmavault.app",
     "productName": "Pharma Vault",
-    "files": ["dist-electron", "dist", "node_modules"],
-    "win": { "target": ["nsis", "portable"] },
-    "mac": { "target": "dmg" },
-    "linux": { "target": "AppImage" },
+    "files": [
+      "dist-electron",
+      "dist",
+      "node_modules"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron/main';
 import Database from 'better-sqlite3';
 
 let syncTimer: ReturnType<typeof setInterval> | null = null;

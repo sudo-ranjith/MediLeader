@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import { app } from 'electron';
+import { app } from 'electron/main';
 
 let db: Database.Database;
 
@@ -190,7 +190,7 @@ const defaultSettings = [
   ['po_prefix', 'PO'],
 ];
 
-export function initDatabase() {
+export function initDatabase(): Database.Database {
   const dbPath = path.join(app.getPath('userData'), 'pharma-vault.db');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
@@ -213,7 +213,7 @@ export function initDatabase() {
   return db;
 }
 
-export function getDb() {
+export function getDb(): Database.Database {
   return db;
 }
 

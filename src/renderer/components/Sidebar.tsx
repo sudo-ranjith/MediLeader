@@ -1,22 +1,28 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Pill, Package, ShoppingCart, Users, Truck,
-  ClipboardList, BarChart3, Settings, LogOut, Activity, GitMerge
+  ClipboardList, BarChart3, Settings, LogOut, Activity, GitMerge,
+  RotateCcw, Calculator, BookOpen, Upload, FileText
 } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import clsx from 'clsx';
 
 const navItems = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/pos', icon: ShoppingCart, label: 'POS / Billing' },
-  { to: '/medicines', icon: Pill, label: 'Medicines' },
-  { to: '/stock', icon: Package, label: 'Stock' },
-  { to: '/customers', icon: Users, label: 'Customers' },
-  { to: '/suppliers', icon: Truck, label: 'Suppliers' },
-  { to: '/purchase-orders', icon: ClipboardList, label: 'Purchase Orders' },
-  { to: '/reports', icon: BarChart3, label: 'Reports' },
-  { to: '/conflicts', icon: GitMerge, label: 'Sync Conflicts' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/dashboard',       icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/pos',             icon: ShoppingCart,    label: 'POS / Billing' },
+  { to: '/invoices',        icon: FileText,        label: 'Invoice History' },
+  { to: '/medicines',       icon: Pill,            label: 'Medicines' },
+  { to: '/stock',           icon: Package,         label: 'Stock' },
+  { to: '/customers',       icon: Users,           label: 'Customers' },
+  { to: '/suppliers',       icon: Truck,           label: 'Suppliers' },
+  { to: '/purchase-orders', icon: ClipboardList,   label: 'Purchase Orders' },
+  { to: '/returns',         icon: RotateCcw,       label: 'Returns' },
+  { to: '/ledger',          icon: BookOpen,        label: 'Ledger' },
+  { to: '/gst-reports',     icon: Calculator,      label: 'GST Reports' },
+  { to: '/reports',         icon: BarChart3,       label: 'Reports' },
+  { to: '/import',          icon: Upload,          label: 'Data Import' },
+  { to: '/conflicts',       icon: GitMerge,        label: 'Sync Conflicts' },
+  { to: '/settings',        icon: Settings,        label: 'Settings' },
 ];
 
 export default function Sidebar() {
@@ -30,7 +36,7 @@ export default function Sidebar() {
             <Activity size={20} />
           </div>
           <div>
-            <div className="font-bold text-lg leading-tight">Pharma Vault</div>
+            <div className="font-bold text-lg leading-tight">MediLeader</div>
             <div className="text-slate-400 text-xs">Pharmacy Manager</div>
           </div>
         </div>

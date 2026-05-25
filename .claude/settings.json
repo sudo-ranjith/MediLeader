@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wmic process *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
+      "Bash(ls \"/c/Users/surya/.claude/projects/c--Ranjith-working-dir-MediLeader/memory/\" 2>/dev/null || echo \"no memory dir\")",
+      "Read(//c/Users/surya/.claude/projects/c--Ranjith-working-dir-MediLeader/memory//**)",
+      "Bash(copy \"c:\\\\Ranjith\\\\working_dir\\\\MediLeader\\\\src\\\\main\\\\preload.cjs\" \"c:\\\\Ranjith\\\\working_dir\\\\MediLeader\\\\dist-electron\\\\preload.cjs\")"
+    ]
+  }
+}

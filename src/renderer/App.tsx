@@ -12,6 +12,12 @@ import PurchaseOrderPage from './pages/PurchaseOrderPage';
 import ReportsPage from './pages/ReportsPage';
 import SettingsPage from './pages/SettingsPage';
 import ConflictsPage from './pages/ConflictsPage';
+import ReturnPage from './pages/ReturnPage';
+import GSTReportsPage from './pages/GSTReportsPage';
+import LedgerPage from './pages/LedgerPage';
+import ImportDashboardPage from './pages/ImportDashboardPage';
+import ImportWizardPage from './pages/ImportWizardPage';
+import InvoiceHistoryPage from './pages/InvoiceHistoryPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useAuthStore();
@@ -36,9 +42,15 @@ export default function App() {
         <Route path="customers" element={<CustomersPage />} />
         <Route path="suppliers" element={<SuppliersPage />} />
         <Route path="purchase-orders" element={<PurchaseOrderPage />} />
+        <Route path="returns" element={<ReturnPage />} />
+        <Route path="invoices" element={<InvoiceHistoryPage />} />
+        <Route path="gst-reports" element={<GSTReportsPage />} />
+        <Route path="ledger" element={<LedgerPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="conflicts" element={<ConflictsPage />} />
+        <Route path="import" element={<ImportDashboardPage />} />
+        <Route path="import/wizard" element={<ImportWizardPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

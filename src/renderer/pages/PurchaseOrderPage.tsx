@@ -1,37 +1,38 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, ChevronDown, ChevronRight, CheckCircle, Send, Eye } from 'lucide-react';
+import { Plus, Search, CheckCircle, Send, Eye } from 'lucide-react';
 import DataTable, { Column } from '../components/DataTable';
 import Modal from '../components/Modal';
-import { dbRun, dbSelect } from '../hooks/useDatabase';
-import { formatCurrency } from '../utils/gstCalculator';
+import { useAuthStore } from '../stores/authStore';
 
 interface PO {
   id: number;
   po_number: string;
   supplier_id: number;
   supplier_name: string;
-  date: string;
+  order_date: string;
   expected_delivery: string;
   total_amount: number;
-  status: 'draft' | 'sent' | 'received';
+  status: 'draft' | 'sent' | 'partial' | 'received' | 'cancelled';
 }
 
 interface POItem {
   id: number;
   medicine_id: number;
   medicine_name: string;
-  quantity: number;
+  ordered_qty: number;
+  received_qty: number;
+  free_qty: number;
   unit_price: number;
-  received_quantity: number;
-  batch_number: string;
-  expiry_date: string;
-  amount: number;
+  total_amount: number;
 }
 
 interface Supplier { id: number; name: string; }
-interface Medicine { id: number; name: string; price: number; cost: number; }
+interface Medicine { id: number; name: string; mrp: number; }
+
+const fmt = (n: number) => `₹${(n ?? 0).toFixed(2)}`;
 
 export default function PurchaseOrderPage() {
+  const { user } = useAuthStore();
   const [pos, setPOs] = useState<PO[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -42,37 +43,55 @@ export default function PurchaseOrderPage() {
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [viewingPO, setViewingPO] = useState<PO | null>(null);
   const [poItems, setPOItems] = useState<POItem[]>([]);
-  const [receiveItems, setReceiveItems] = useState<Array<POItem & { batch_number_input: string; expiry_date_input: string; received_qty_input: string }>>([]);
+  const [receiveItems, setReceiveItems] = useState<Array<POItem & {
+    batch_number_input: string;
+    expiry_date_input: string;
+    received_qty_input: string;
+    free_qty_input: string;
+    unit_price_input: string;
+    reorder_level_input: string;
+  }>>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const [poForm, setPOForm] = useState({ supplier_id: '', date: new Date().toISOString().split('T')[0], expected_delivery: '', notes: '' });
-  const [lineItems, setLineItems] = useState<Array<{ medicine_id: string; medicine_name: string; quantity: string; unit_price: string }>>([
-    { medicine_id: '', medicine_name: '', quantity: '', unit_price: '' }
-  ]);
+  const [poForm, setPOForm] = useState({
+    supplier_id: '',
+    order_date: new Date().toISOString().split('T')[0],
+    expected_delivery: '',
+    notes: '',
+  });
+  const [lineItems, setLineItems] = useState<Array<{
+    medicine_id: string;
+    medicine_name: string;
+    ordered_qty: string;
+    free_qty: string;
+    unit_price: string;
+  }>>([{ medicine_id: '', medicine_name: '', ordered_qty: '', free_qty: '0', unit_price: '' }]);
 
   const loadPOs = useCallback(async () => {
     setLoading(true);
-    try {
-      const sql = search
-        ? `SELECT po.*, s.name as supplier_name FROM purchase_orders po JOIN suppliers s ON po.supplier_id = s.id WHERE po.po_number LIKE ? OR s.name LIKE ? ORDER BY po.id DESC`
-        : `SELECT po.*, s.name as supplier_name FROM purchase_orders po JOIN suppliers s ON po.supplier_id = s.id ORDER BY po.id DESC`;
-      const params = search ? [`%${search}%`, `%${search}%`] : [];
-      setPOs(await window.api.dbSelect(sql, params) as PO[]);
-    } finally {
-      setLoading(false);
+    const res = await window.api.poList({});
+    if (res.success) {
+      const rows: PO[] = res.data.rows ?? res.data;
+      const filtered = search
+        ? rows.filter(p =>
+            p.po_number.toLowerCase().includes(search.toLowerCase()) ||
+            p.supplier_name.toLowerCase().includes(search.toLowerCase()))
+        : rows;
+      setPOs(filtered);
     }
+    setLoading(false);
   }, [search]);
 
   useEffect(() => { const t = setTimeout(loadPOs, 300); return () => clearTimeout(t); }, [loadPOs]);
 
   useEffect(() => {
-    window.api.dbSelect('SELECT id, name FROM suppliers ORDER BY name ASC', []).then(r => setSuppliers(r as Supplier[]));
-    window.api.dbSelect('SELECT id, name, price, cost FROM medicines ORDER BY name ASC', []).then(r => setMedicines(r as Medicine[]));
+    window.api.supplierList().then(r => { if (r.success) setSuppliers(r.data); });
+    window.api.medicineList().then(r => { if (r.success) setMedicines(r.data); });
   }, []);
 
   function addLine() {
-    setLineItems(prev => [...prev, { medicine_id: '', medicine_name: '', quantity: '', unit_price: '' }]);
+    setLineItems(prev => [...prev, { medicine_id: '', medicine_name: '', ordered_qty: '', free_qty: '0', unit_price: '' }]);
   }
 
   function updateLine(idx: number, field: string, value: string) {
@@ -80,7 +99,7 @@ export default function PurchaseOrderPage() {
       if (i !== idx) return l;
       if (field === 'medicine_id') {
         const med = medicines.find(m => m.id === Number(value));
-        return { ...l, medicine_id: value, medicine_name: med?.name || '', unit_price: med ? String(med.cost) : l.unit_price };
+        return { ...l, medicine_id: value, medicine_name: med?.name || '', unit_price: med ? String(med.mrp) : l.unit_price };
       }
       return { ...l, [field]: value };
     }));
@@ -93,26 +112,28 @@ export default function PurchaseOrderPage() {
   async function handleCreatePO(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    const validItems = lineItems.filter(l => l.medicine_id && Number(l.quantity) > 0 && Number(l.unit_price) > 0);
+    const validItems = lineItems.filter(l => l.medicine_id && Number(l.ordered_qty) > 0 && Number(l.unit_price) > 0);
     if (validItems.length === 0) { setError('Add at least one valid item'); return; }
     setSaving(true);
     try {
-      const poNumber = await window.api.generatePONumber();
-      const supplier = suppliers.find(s => s.id === Number(poForm.supplier_id));
-      const totalAmount = validItems.reduce((sum, l) => sum + Number(l.quantity) * Number(l.unit_price), 0);
-      const poResult = await dbRun(
-        `INSERT INTO purchase_orders (po_number, supplier_id, supplier_name, date, expected_delivery, total_amount, notes) VALUES (?,?,?,?,?,?,?)`,
-        [poNumber, Number(poForm.supplier_id), supplier?.name || '', poForm.date, poForm.expected_delivery || null, totalAmount, poForm.notes || null]
-      );
-      const poId = poResult.lastID;
-      const ops = validItems.map(l => ({
-        sql: `INSERT INTO po_items (po_id, medicine_id, medicine_name, quantity, unit_price, amount) VALUES (?,?,?,?,?,?)`,
-        params: [poId, Number(l.medicine_id), l.medicine_name, Number(l.quantity), Number(l.unit_price), Number(l.quantity) * Number(l.unit_price)],
-      }));
-      await window.api.dbTransaction(ops);
+      const res = await window.api.poCreate({
+        supplier_id:       Number(poForm.supplier_id),
+        supply_type:       'intrastate',
+        order_date:        poForm.order_date,
+        expected_delivery: poForm.expected_delivery || undefined,
+        notes:             poForm.notes || undefined,
+        created_by:        user?.id ?? 1,
+        items: validItems.map(l => ({
+          medicine_id: Number(l.medicine_id),
+          ordered_qty: Number(l.ordered_qty),
+          free_qty:    Number(l.free_qty) || 0,
+          unit_price:  parseFloat(l.unit_price),
+        })),
+      });
+      if (!res.success) { setError(res.error ?? 'Failed to create PO'); return; }
       setShowCreateModal(false);
-      setLineItems([{ medicine_id: '', medicine_name: '', quantity: '', unit_price: '' }]);
-      setPOForm({ supplier_id: '', date: new Date().toISOString().split('T')[0], expected_delivery: '', notes: '' });
+      setLineItems([{ medicine_id: '', medicine_name: '', ordered_qty: '', free_qty: '0', unit_price: '' }]);
+      setPOForm({ supplier_id: '', order_date: new Date().toISOString().split('T')[0], expected_delivery: '', notes: '' });
       loadPOs();
     } catch (err: any) {
       setError(err.message);
@@ -123,21 +144,32 @@ export default function PurchaseOrderPage() {
 
   async function openView(po: PO) {
     setViewingPO(po);
-    const items = await dbSelect<POItem>(`SELECT * FROM po_items WHERE po_id = ?`, [po.id]);
-    setPOItems(items);
+    const res = await window.api.poGet(po.id);
+    if (res.success) setPOItems(res.data.items ?? []);
     setShowViewModal(true);
   }
 
-  async function updateStatus(po: PO, status: 'sent' | 'received') {
-    if (status === 'received') {
-      const items = await dbSelect<POItem>(`SELECT * FROM po_items WHERE po_id = ?`, [po.id]);
-      setReceiveItems(items.map(i => ({ ...i, batch_number_input: i.batch_number || '', expiry_date_input: i.expiry_date || '', received_qty_input: String(i.quantity) })));
-      setViewingPO(po);
-      setShowReceiveModal(true);
-    } else {
-      await dbRun(`UPDATE purchase_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, [status, po.id]);
-      loadPOs();
-    }
+  async function updateStatus(po: PO, status: 'sent') {
+    const res = await window.api.poUpdateStatus(po.id, status);
+    if (!res.success) { alert(res.error ?? 'Failed to update status'); return; }
+    loadPOs();
+  }
+
+  async function openReceive(po: PO) {
+    const res = await window.api.poGet(po.id);
+    if (!res.success) { alert('Failed to load PO details'); return; }
+    const items: POItem[] = res.data.items ?? [];
+    setReceiveItems(items.map(i => ({
+      ...i,
+      batch_number_input:   '',
+      expiry_date_input:    '',
+      received_qty_input:   String(i.ordered_qty - i.received_qty),
+      free_qty_input:       '0',
+      unit_price_input:     String(i.unit_price),
+      reorder_level_input:  '10',
+    })));
+    setViewingPO(po);
+    setShowReceiveModal(true);
   }
 
   async function handleReceive(e: React.FormEvent) {
@@ -145,24 +177,27 @@ export default function PurchaseOrderPage() {
     if (!viewingPO) return;
     setSaving(true);
     try {
-      const ops: Array<{sql: string; params: any[]}> = [];
-      for (const item of receiveItems) {
-        const qty = parseInt(item.received_qty_input);
-        if (qty > 0 && item.batch_number_input && item.expiry_date_input) {
-          ops.push({
-            sql: `INSERT INTO stock (medicine_id, batch_number, expiry_date, quantity, reorder_level)
-                  VALUES (?,?,?,?,10)
-                  ON CONFLICT(medicine_id, batch_number) DO UPDATE SET quantity = quantity + excluded.quantity`,
-            params: [item.medicine_id, item.batch_number_input, item.expiry_date_input, qty],
-          });
-          ops.push({
-            sql: `UPDATE po_items SET received_quantity=?, batch_number=?, expiry_date=? WHERE id=?`,
-            params: [qty, item.batch_number_input, item.expiry_date_input, item.id],
-          });
-        }
-      }
-      ops.push({ sql: `UPDATE purchase_orders SET status='received', updated_at=CURRENT_TIMESTAMP WHERE id=?`, params: [viewingPO.id] });
-      await window.api.dbTransaction(ops);
+      const items = receiveItems
+        .filter(item => Number(item.received_qty_input) > 0 && item.batch_number_input && item.expiry_date_input)
+        .map(item => ({
+          po_item_id:    item.id,
+          batch_number:  item.batch_number_input,
+          expiry_date:   item.expiry_date_input,
+          received_qty:  Number(item.received_qty_input),
+          free_qty:      Number(item.free_qty_input) || 0,
+          unit_price:    parseFloat(item.unit_price_input) || item.unit_price,
+          reorder_level: Number(item.reorder_level_input) || 10,
+        }));
+
+      if (items.length === 0) { alert('Enter at least one received item with batch and expiry'); setSaving(false); return; }
+
+      const res = await window.api.poReceive({
+        po_id:        viewingPO.id,
+        receipt_date: new Date().toISOString().split('T')[0],
+        items,
+        created_by:   user?.id ?? 1,
+      });
+      if (!res.success) { alert(res.error ?? 'Failed to receive'); setSaving(false); return; }
       setShowReceiveModal(false);
       loadPOs();
     } catch (err: any) {
@@ -173,24 +208,24 @@ export default function PurchaseOrderPage() {
   }
 
   const statusBadge = (status: string) => ({
-    draft: 'badge-gray', sent: 'badge-yellow', received: 'badge-green'
-  }[status] || 'badge-gray');
+    draft: 'badge-gray', sent: 'badge-yellow', partial: 'badge-yellow', received: 'badge-green', cancelled: 'badge-red'
+  }[status] ?? 'badge-gray');
 
   const columns: Column<PO>[] = [
-    { key: 'po_number', header: 'PO Number', render: r => <span className="font-medium text-blue-600">{r.po_number}</span> },
+    { key: 'po_number',    header: 'PO Number',   render: r => <span className="font-medium text-blue-600">{r.po_number}</span> },
     { key: 'supplier_name', header: 'Supplier' },
-    { key: 'date', header: 'Date' },
+    { key: 'order_date',   header: 'Date' },
     { key: 'expected_delivery', header: 'Expected Delivery', render: r => r.expected_delivery || '-' },
-    { key: 'total_amount', header: 'Total', render: r => formatCurrency(r.total_amount) },
-    { key: 'status', header: 'Status', render: r => <span className={statusBadge(r.status)}>{r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span> },
-    { key: 'actions', header: 'Actions', render: r => (
+    { key: 'total_amount', header: 'Total',        render: r => fmt(r.total_amount) },
+    { key: 'status',       header: 'Status',       render: r => <span className={statusBadge(r.status)}>{r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span> },
+    { key: 'actions',      header: 'Actions',      render: r => (
       <div className="flex gap-2">
         <button onClick={() => openView(r)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 transition-colors"><Eye size={14} /></button>
         {r.status === 'draft' && (
           <button onClick={() => updateStatus(r, 'sent')} className="p-1.5 rounded hover:bg-blue-50 text-blue-600 transition-colors" title="Mark as Sent"><Send size={14} /></button>
         )}
-        {r.status === 'sent' && (
-          <button onClick={() => updateStatus(r, 'received')} className="p-1.5 rounded hover:bg-green-50 text-green-600 transition-colors" title="Mark as Received"><CheckCircle size={14} /></button>
+        {(r.status === 'sent' || r.status === 'partial') && (
+          <button onClick={() => openReceive(r)} className="p-1.5 rounded hover:bg-green-50 text-green-600 transition-colors" title="Receive Items"><CheckCircle size={14} /></button>
         )}
       </div>
     )},
@@ -224,7 +259,7 @@ export default function PurchaseOrderPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Order Date</label>
-              <input type="date" className="input" value={poForm.date} onChange={e => setPOForm(f => ({...f, date: e.target.value}))} />
+              <input type="date" className="input" value={poForm.order_date} onChange={e => setPOForm(f => ({...f, order_date: e.target.value}))} />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Expected Delivery</label>
@@ -242,7 +277,8 @@ export default function PurchaseOrderPage() {
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="text-left px-3 py-2 font-semibold text-slate-500">Medicine</th>
-                    <th className="text-left px-3 py-2 font-semibold text-slate-500 w-24">Qty</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-500 w-20">Qty</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-500 w-20">Free</th>
                     <th className="text-left px-3 py-2 font-semibold text-slate-500 w-28">Unit Price</th>
                     <th className="text-left px-3 py-2 font-semibold text-slate-500 w-24">Amount</th>
                     <th className="px-3 py-2 w-10"></th>
@@ -258,13 +294,16 @@ export default function PurchaseOrderPage() {
                         </select>
                       </td>
                       <td className="px-3 py-2">
-                        <input type="number" min="1" className="input text-xs" value={line.quantity} onChange={e => updateLine(idx, 'quantity', e.target.value)} placeholder="0" />
+                        <input type="number" min="1" className="input text-xs" value={line.ordered_qty} onChange={e => updateLine(idx, 'ordered_qty', e.target.value)} placeholder="0" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input type="number" min="0" className="input text-xs" value={line.free_qty} onChange={e => updateLine(idx, 'free_qty', e.target.value)} placeholder="0" />
                       </td>
                       <td className="px-3 py-2">
                         <input type="number" min="0.01" step="0.01" className="input text-xs" value={line.unit_price} onChange={e => updateLine(idx, 'unit_price', e.target.value)} placeholder="0.00" />
                       </td>
                       <td className="px-3 py-2 font-medium text-slate-700">
-                        {line.quantity && line.unit_price ? formatCurrency(Number(line.quantity) * Number(line.unit_price)) : '-'}
+                        {line.ordered_qty && line.unit_price ? fmt(Number(line.ordered_qty) * Number(line.unit_price)) : '-'}
                       </td>
                       <td className="px-3 py-2">
                         <button type="button" onClick={() => removeLine(idx)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
@@ -274,9 +313,9 @@ export default function PurchaseOrderPage() {
                 </tbody>
                 <tfoot className="bg-slate-50 border-t border-slate-200">
                   <tr>
-                    <td colSpan={3} className="px-3 py-2 text-right font-semibold text-slate-600">Total:</td>
+                    <td colSpan={4} className="px-3 py-2 text-right font-semibold text-slate-600">Total:</td>
                     <td className="px-3 py-2 font-bold text-slate-800">
-                      {formatCurrency(lineItems.reduce((s, l) => s + (Number(l.quantity) * Number(l.unit_price) || 0), 0))}
+                      {fmt(lineItems.reduce((s, l) => s + (Number(l.ordered_qty) * Number(l.unit_price) || 0), 0))}
                     </td>
                     <td></td>
                   </tr>
@@ -303,16 +342,17 @@ export default function PurchaseOrderPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-4 text-sm">
               <div><span className="text-slate-500">Supplier:</span> <span className="font-medium">{viewingPO.supplier_name}</span></div>
-              <div><span className="text-slate-500">Date:</span> <span className="font-medium">{viewingPO.date}</span></div>
+              <div><span className="text-slate-500">Date:</span> <span className="font-medium">{viewingPO.order_date}</span></div>
               <div><span className="text-slate-500">Status:</span> <span className={statusBadge(viewingPO.status)}>{viewingPO.status}</span></div>
               <div><span className="text-slate-500">Expected:</span> <span className="font-medium">{viewingPO.expected_delivery || 'N/A'}</span></div>
-              <div><span className="text-slate-500">Total:</span> <span className="font-bold">{formatCurrency(viewingPO.total_amount)}</span></div>
+              <div><span className="text-slate-500">Total:</span> <span className="font-bold">{fmt(viewingPO.total_amount)}</span></div>
             </div>
             <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="text-left px-3 py-2 font-semibold text-slate-500">Medicine</th>
-                  <th className="text-right px-3 py-2 font-semibold text-slate-500">Qty</th>
+                  <th className="text-right px-3 py-2 font-semibold text-slate-500">Ordered</th>
+                  <th className="text-right px-3 py-2 font-semibold text-slate-500">Free</th>
                   <th className="text-right px-3 py-2 font-semibold text-slate-500">Unit Price</th>
                   <th className="text-right px-3 py-2 font-semibold text-slate-500">Amount</th>
                   <th className="text-center px-3 py-2 font-semibold text-slate-500">Received</th>
@@ -322,10 +362,11 @@ export default function PurchaseOrderPage() {
                 {poItems.map(item => (
                   <tr key={item.id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-medium">{item.medicine_name}</td>
-                    <td className="px-3 py-2 text-right">{item.quantity}</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(item.unit_price)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td>
-                    <td className="px-3 py-2 text-center">{item.received_quantity || 0}</td>
+                    <td className="px-3 py-2 text-right">{item.ordered_qty}</td>
+                    <td className="px-3 py-2 text-right">{item.free_qty}</td>
+                    <td className="px-3 py-2 text-right">{fmt(item.unit_price)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{fmt(item.total_amount)}</td>
+                    <td className="px-3 py-2 text-center">{item.received_qty}</td>
                   </tr>
                 ))}
               </tbody>
@@ -335,32 +376,53 @@ export default function PurchaseOrderPage() {
       </Modal>
 
       {/* Receive PO Modal */}
-      <Modal isOpen={showReceiveModal} onClose={() => setShowReceiveModal(false)} title="Receive Items" size="xl">
+      <Modal isOpen={showReceiveModal} onClose={() => setShowReceiveModal(false)} title="Receive Items (GRN)" size="xl">
         <form onSubmit={handleReceive} className="space-y-4">
-          <div className="text-sm text-slate-600 mb-2">Enter batch numbers and expiry dates for received items:</div>
+          <div className="text-sm text-slate-600">Enter batch details for each received item:</div>
           <div className="space-y-3">
             {receiveItems.map((item, idx) => (
               <div key={item.id} className="p-3 border border-slate-200 rounded-lg">
-                <div className="font-medium text-slate-800 mb-2">{item.medicine_name} (Ordered: {item.quantity})</div>
+                <div className="font-medium text-slate-800 mb-2">
+                  {item.medicine_name}
+                  <span className="ml-2 text-xs text-slate-500">Ordered: {item.ordered_qty} | Already received: {item.received_qty}</span>
+                </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Batch Number</label>
-                    <input className="input text-sm" value={item.batch_number_input} onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, batch_number_input: e.target.value} : r))} required />
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Batch Number *</label>
+                    <input className="input text-sm" value={item.batch_number_input}
+                      onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, batch_number_input: e.target.value} : r))} />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Expiry Date</label>
-                    <input type="date" className="input text-sm" value={item.expiry_date_input} onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, expiry_date_input: e.target.value} : r))} required />
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Expiry Date *</label>
+                    <input type="date" className="input text-sm" value={item.expiry_date_input}
+                      onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, expiry_date_input: e.target.value} : r))} />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Received Qty</label>
-                    <input type="number" min="0" className="input text-sm" value={item.received_qty_input} onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, received_qty_input: e.target.value} : r))} />
+                    <input type="number" min="0" className="input text-sm" value={item.received_qty_input}
+                      onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, received_qty_input: e.target.value} : r))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Free Qty</label>
+                    <input type="number" min="0" className="input text-sm" value={item.free_qty_input}
+                      onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, free_qty_input: e.target.value} : r))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Unit Price (₹)</label>
+                    <input type="number" min="0" step="0.01" className="input text-sm" value={item.unit_price_input}
+                      onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, unit_price_input: e.target.value} : r))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Reorder Level</label>
+                    <input type="number" min="0" className="input text-sm" value={item.reorder_level_input}
+                      onChange={e => setReceiveItems(prev => prev.map((r, i) => i === idx ? {...r, reorder_level_input: e.target.value} : r))} />
                   </div>
                 </div>
               </div>
             ))}
           </div>
           <div className="flex gap-3 pt-2">
-            <button type="submit" className="btn-success flex-1" disabled={saving}>{saving ? 'Processing...' : 'Receive & Update Stock'}</button>
+            <button type="submit" className="btn-primary flex-1" disabled={saving}>{saving ? 'Processing...' : 'Receive & Update Stock'}</button>
             <button type="button" className="btn-secondary" onClick={() => setShowReceiveModal(false)}>Cancel</button>
           </div>
         </form>
